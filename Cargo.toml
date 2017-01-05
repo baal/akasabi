@@ -1,0 +1,6 @@
+[package]
+name = "rustweb"
+version = "0.1.0"
+authors = ["baal"]
+
+[dependencies]
