@@ -1,6 +1,7 @@
 extern crate rustweb;
 
 use std::str;
+use std::string::String;
 use std::net::TcpListener;
 
 use rustweb::Handler;
@@ -11,24 +12,26 @@ use rustweb::Response;
 struct MyHandler;
 
 impl Handler for MyHandler {
-	fn handle(&self, req: &Request, res: &mut Response) {
+	fn handle(&self, req: &Request) -> Response {
 		println!("remote_addr=\"{}\"", req.remote_addr.unwrap());
-		if let Some(ref uri) = req.uri {
-			println!("uri=\"{}\"", str::from_utf8(&uri).unwrap());
-		}
+		println!("url=\"{}\"", str::from_utf8(req.get_url().unwrap()).unwrap());
 		for line in &req.header {
-			println!("\"{}\"", str::from_utf8(&line).unwrap());
+			println!("\"{}\"", str::from_utf8(line.as_slice()).unwrap());
 		}
-		res.content.push_str("<!DOCTYPE html>\n");
-		res.content.push_str("<html lang=\"ja\">\n");
-		res.content.push_str("<head><title>TEST</title></head>\n");
-		res.content.push_str("<body>\n");
-		res.content.push_str("<form method=\"POST\">\n");
-		res.content.push_str("<input type=\"text\" name=\"test\" />\n");
-		res.content.push_str("<button>submit</button>\n");
-		res.content.push_str("</form>\n");
-		res.content.push_str("</body>\n");
-		res.content.push_str("</html>\n");
+		let mut content = String::new();
+		content.push_str("<!DOCTYPE html>\n");
+		content.push_str("<html lang=\"ja\">\n");
+		content.push_str("<head><title>TEST</title></head>\n");
+		content.push_str("<body>\n");
+		content.push_str("<form method=\"POST\">\n");
+		content.push_str("<input type=\"text\" name=\"test\" />\n");
+		content.push_str("<button>submit</button>\n");
+		content.push_str("</form>\n");
+		content.push_str("</body>\n");
+		content.push_str("</html>\n");
+		let mut res = req.create_response();
+		res.content = Some(content.as_bytes().to_vec());
+		res
 	}
 }
 

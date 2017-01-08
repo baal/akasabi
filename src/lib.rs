@@ -24,7 +24,6 @@ pub struct Request {
 	pub remote_addr: Option<SocketAddr>,
 	pub protocol: Option<Protocol>,
 	pub method: Option<Method>,
-	pub uri: Option<Vec<u8>>,
 	pub connection: Connection,
 	pub header: Vec<Vec<u8>>,
 }
@@ -35,27 +34,40 @@ impl Request {
 			remote_addr: stream.peer_addr().ok(),
 			protocol: None,
 			method: None,
-			uri: None,
 			connection: Connection::Close,
 			header: Vec::new(),
 		}
 	}
+	pub fn get_url(&self) -> Option<&[u8]> {
+		if ! self.header.is_empty() {
+			let first_line = &self.header[0];
+			if let Some(pos1) = first_line[..].iter().position(|&x| x == 32) {
+				if let Some(pos2) = first_line[pos1 + 1..].iter().position(|&x| x == 32) {
+					return Some(&first_line[pos1 + 1..pos1 + 1 + pos2])
+				}
+			}
+		}
+		None
+	}
+	pub fn create_response(&self) -> Response {
+		Response::new()
+	}
 }
 
 pub struct Response {
-	pub content: String,
+	pub content: Option<Vec<u8>>,
 }
 
 impl Response {
 	fn new() -> Response {
 		Response {
-			content: String::new(),
+			content: None,
 		}
 	}
 }
 
 pub trait Handler {
-	fn handle(&self, &Request, &mut Response);
+	fn handle(&self, &Request) -> Response;
 }
 
 pub struct HttpHandler<T> {
@@ -76,7 +88,6 @@ impl<T: Handler> HttpHandler<T> {
 			let mut buf: [u8; 8192] = [0; 8192];
 
 			let mut request = Request::new(&stream);
-			let mut response = Response::new();
 
 			let mut flag_read_request = false;
 			let mut flag_read_header = false;
@@ -101,7 +112,6 @@ impl<T: Handler> HttpHandler<T> {
 										} else if buf[pos2 + 1..offset + eol].eq_ignore_ascii_case(b"HTTP/1.1") {
 											request.protocol = Some(Protocol::Http11);
 										}
-										request.uri = Some(buf[pos1 + 1..pos1 + 1 + pos2].to_vec());
 									}
 								}
 								flag_read_request = true;
@@ -125,19 +135,25 @@ impl<T: Handler> HttpHandler<T> {
 				offset = offset + size;
 			}
 
-			self.handler.handle(&request, &mut response);
+			if offset == buf.len() {
+				let _ = stream.write("HTTP/1.1 400 Bad Request\r\n\r\n".as_bytes());
+				return
+			}
 
-			let mut header = String::new();
-			header.push_str("HTTP/1.1 200 OK\r\n");
-			header.push_str("Server: Rust 1.13.0\r\n");
-			header.push_str("Content-Type: text/html; charset=UTF-8\r\n");
-			header.push_str("Content-Length: ");
-			header.push_str(response.content.len().to_string().as_str());
-			header.push_str("\r\n");
-			header.push_str("Connection: keep-alive\r\n");
-			header.push_str("\r\n");
-			let _ = stream.write(header.as_bytes());
-			let _ = stream.write(response.content.as_bytes());
+			let response = self.handler.handle(&request);
+			if let Some(content) = response.content {
+				let mut header = String::new();
+				header.push_str("HTTP/1.1 200 OK\r\n");
+				header.push_str("Server: Rust 1.13.0\r\n");
+				header.push_str("Content-Type: text/html; charset=UTF-8\r\n");
+				header.push_str("Content-Length: ");
+				header.push_str(content.len().to_string().as_str());
+				header.push_str("\r\n");
+				header.push_str("Connection: keep-alive\r\n");
+				header.push_str("\r\n");
+				let _ = stream.write(header.as_bytes());
+				let _ = stream.write(content.as_slice());
+			}
 		}
 	}
 }
