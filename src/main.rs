@@ -36,7 +36,7 @@ impl Handler for MyHandler {
 }
 
 fn main() {
-	let handler = HttpHandler::new(MyHandler);
+	let mut handler = HttpHandler::new(MyHandler);
 	let listener = TcpListener::bind("0.0.0.0:8080").unwrap();
 	for stream in listener.incoming() {
 		handler.handle(stream.unwrap());
