@@ -13,9 +13,13 @@ struct MyHandler;
 
 impl Handler for MyHandler {
 	fn handle(&self, req: &Request) -> Response {
-		println!("remote_addr=\"{}\"", req.remote_addr.unwrap());
-		println!("url=\"{}\"", str::from_utf8(req.get_url().unwrap()).unwrap());
-		for line in &req.header {
+		if let Some(addr) = req.get_peer_addr() {
+			println!("remote_addr=\"{}\"", addr);
+		}
+		if let Some(url) = req.get_url() {
+			println!("url=\"{}\"", str::from_utf8(url).unwrap());
+		}
+		for line in req.get_header() {
 			println!("\"{}\"", str::from_utf8(line.as_slice()).unwrap());
 		}
 		let mut content = String::new();
@@ -29,9 +33,7 @@ impl Handler for MyHandler {
 		content.push_str("</form>\n");
 		content.push_str("</body>\n");
 		content.push_str("</html>\n");
-		let mut res = req.create_response();
-		res.content = Some(content.as_bytes().to_vec());
-		res
+		req.create_response(Some(content.as_bytes().to_vec()))
 	}
 }
 

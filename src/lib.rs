@@ -1,46 +1,95 @@
 use std::ascii::AsciiExt;
 use std::io::prelude::*;
+use std::net::Shutdown;
 use std::net::SocketAddr;
 use std::net::TcpStream;
 use std::string::String;
 use std::vec::Vec;
 
+#[derive(Copy,Clone)]
 pub enum Protocol {
 	Http10,
 	Http11,
 }
 
+#[derive(Copy,Clone)]
 pub enum Method {
-	Get,
-	Post,
+	GET,
+	POST,
 }
 
+#[derive(Copy,Clone)]
 pub enum Connection {
 	Close,
 	KeepAlive,
 }
 
-pub struct Request {
-	pub remote_addr: Option<SocketAddr>,
-	pub protocol: Option<Protocol>,
-	pub method: Option<Method>,
-	pub connection: Connection,
-	pub header: Vec<Vec<u8>>,
+pub trait Request {
+	fn get_peer_addr(&self) -> Option<SocketAddr>;
+	fn get_protocol(&self) -> Option<Protocol>;
+	fn get_method(&self) -> Option<Method>;
+	fn get_connection(&self) -> Option<Connection>;
+	fn get_header(&self) -> &Vec<Vec<u8>>;
+	fn get_content_length(&self) -> usize;
+	fn get_post_data(&self) -> Option<&[u8]>;
+	fn get_url(&self) ->Option<&[u8]>;
+	fn create_response(&self, contents: Option<Vec<u8>>) -> Response;
 }
 
-impl Request {
-	fn new(stream: &TcpStream) -> Request {
-		Request {
-			remote_addr: stream.peer_addr().ok(),
-			protocol: None,
-			method: None,
-			connection: Connection::Close,
-			header: Vec::new(),
+pub struct Response {
+	content: Option<Vec<u8>>,
+}
+
+impl Response {
+	fn new(contents: Option<Vec<u8>>) -> Response {
+		Response {
+			content: contents,
 		}
 	}
-	pub fn get_url(&self) -> Option<&[u8]> {
-		if ! self.header.is_empty() {
-			let first_line = &self.header[0];
+}
+
+pub trait Handler {
+	fn handle(&self, &Request) -> Response;
+}
+
+struct RequestImpl<'a, T: 'a> {
+	http_handler: &'a HttpHandler<T>,
+	peer_addr: Option<SocketAddr>,
+	method: Option<Method>,
+	protocol: Option<Protocol>,
+	connection: Option<Connection>,
+	header: &'a Vec<Vec<u8>>,
+	content_length: usize,
+	post_data: Option<&'a [u8]>,
+}
+
+impl<'a, T: Handler> Request for RequestImpl<'a, T> {
+	fn get_peer_addr(&self) -> Option<SocketAddr> {
+		self.peer_addr
+	}
+	fn get_protocol(&self) -> Option<Protocol> {
+		self.protocol
+	}
+	fn get_method(&self) -> Option<Method> {
+		self.method
+	}
+	fn get_connection(&self) -> Option<Connection> {
+		None
+	}
+	fn get_header(&self) -> &Vec<Vec<u8>> {
+		self.header
+	}
+	fn get_content_length(&self) -> usize {
+		self.content_length
+	}
+	fn get_post_data(&self) -> Option<&[u8]> {
+		self.post_data
+	}
+	fn get_url(&self) -> Option<&[u8]> {
+		let header = self.get_header();
+		if ! header.is_empty() {
+			//let ref first_line = header[0];
+			let first_line = &header[0];
 			if let Some(pos1) = first_line[..].iter().position(|&x| x == 32) {
 				if let Some(pos2) = first_line[..].iter().rposition(|&x| x == 32) {
 					if pos1 + 1 < pos2 {
@@ -51,25 +100,9 @@ impl Request {
 		}
 		None
 	}
-	pub fn create_response(&self) -> Response {
-		Response::new()
+	fn create_response(&self, contents: Option<Vec<u8>>) -> Response {
+		Response::new(contents)
 	}
-}
-
-pub struct Response {
-	pub content: Option<Vec<u8>>,
-}
-
-impl Response {
-	fn new() -> Response {
-		Response {
-			content: None,
-		}
-	}
-}
-
-pub trait Handler {
-	fn handle(&self, &Request) -> Response;
 }
 
 pub struct HttpHandler<T> {
@@ -91,7 +124,7 @@ impl<T: Handler> HttpHandler<T> {
 	pub fn read_line(&mut self, stream: &mut TcpStream) -> Option<Vec<u8>> {
 		loop {
 			if self.offset > 0 {
-				if let Some(pos) = self.buffer[..self.offset].into_iter().position(|&x| x == 10) {
+				if let Some(pos) = self.buffer[..self.offset].iter().position(|&x| x == 10) {
 					let eol = if pos > 0 && self.buffer[pos - 1] == 13 { pos - 1 } else { pos };
 					let line = self.buffer[0..eol].to_vec();
 					if pos + 1 < self.offset {
@@ -116,43 +149,112 @@ impl<T: Handler> HttpHandler<T> {
 		None
 	}
 
+	pub fn read_post_data(&mut self, stream: &mut TcpStream, content_length: usize) -> Option<&[u8]> {
+		loop {
+			if self.offset >= content_length {
+				return Some(&self.buffer[..content_length]);
+			}
+			if self.offset < self.buffer.len() {
+				let size = stream.read(&mut self.buffer[self.offset..]).unwrap();
+				if size == 0 { break; }
+				self.offset = self.offset + size;
+			} else {
+				break;
+			}
+		}
+		None
+	}
+
 	pub fn handle(&mut self, mut stream: TcpStream) {
 
-		let mut request = Request::new(&stream);
+		self.offset = 0;
+		for i in self.buffer.as_mut().into_iter() {
+			*i = 0;
+		}
+
+		let peer_addr = stream.peer_addr().ok();
+
+		let mut method: Option<Method> = None;
+		let mut protocol: Option<Protocol> = None;
+		let mut header: Vec<Vec<u8>> = Vec::new();
 
 		while let Some(line) = self.read_line(&mut stream) {
 			if line.len() == 0 { break; }
-			if request.header.is_empty() {
+			if header.is_empty() {
 				if let Some(pos) = line.iter().position(|&x| x == 32) {
 					if line[..pos].eq_ignore_ascii_case(b"GET") {
-						request.method = Some(Method::Get);
+						method = Some(Method::GET);
 					} else if line[..pos].eq_ignore_ascii_case(b"POST") {
-						request.method = Some(Method::Post);
+						method = Some(Method::POST);
 					}
 				}
 				if let Some(pos) = line.iter().rposition(|&x| x == 32) {
 					if line[pos + 1..].eq_ignore_ascii_case(b"HTTP/1.0") {
-						request.protocol = Some(Protocol::Http10);
+						protocol = Some(Protocol::Http10);
 					} else if line[pos + 1..].eq_ignore_ascii_case(b"HTTP/1.1") {
-						request.protocol = Some(Protocol::Http11);
+						protocol = Some(Protocol::Http11);
 					}
 				}
 			}
-			request.header.push(line);
+			header.push(line);
 		}
 
-		//if self.offset > 0 {
-		//	for i in self.buffer[..self.offset].iter() {
-		//		println!("{}", i);
-		//	}
-		//}
+		if method.is_none() {
+			let _ = stream.write(b"HTTP/1.1 501 Not Implemented\r\n\r\n");
+			let _ = stream.flush();
+			let _ = stream.shutdown(Shutdown::Both);
+			return;
+		}
 
-		//let _ = stream.write(b"HTTP/1.1 400 Bad Request\r\n\r\n");
+		if protocol.is_none() {
+			let _ = stream.write(b"HTTP/1.1 501 Not Implemented\r\n\r\n");
+			let _ = stream.flush();
+			let _ = stream.shutdown(Shutdown::Both);
+			return;
+		}
 
-		let response = self.handler.handle(&request);
+		let mut content_length: usize = 0;
+		let mut post_data: Option<&[u8]> = None;
+		if let Some(Method::POST) = method {
+			for line in &header {
+				if line.len() > 15 && line[..15].eq_ignore_ascii_case(b"Content-Length:") {
+					content_length = line[15..].iter().fold(0, |a, &x|
+						if 48 <= x && x <= 57 { a * 10 + x as usize - 48 } else { a }
+					);
+				}
+			}
+			loop {
+				if self.offset < content_length && self.offset < self.buffer.len() {
+					let size = stream.read(&mut self.buffer[self.offset..]).unwrap();
+					if size == 0 { break; }
+					self.offset = self.offset + size;
+				} else {
+					break;
+				}
+			}
+			post_data = Some(&self.buffer[..content_length]);
+		}
+
+		let request = RequestImpl {
+			http_handler: self,
+			peer_addr: peer_addr,
+			method: method,
+			protocol: protocol,
+			connection: None,
+			header: &header,
+			content_length: content_length,
+			post_data: post_data,
+		};
+
+		let response = self.handler.handle(&request as &Request);
 		if let Some(content) = response.content {
 			let mut header = String::new();
-			header.push_str("HTTP/1.1 200 OK\r\n");
+			if let Some(ref proto) = protocol {
+				match *proto {
+					Protocol::Http10 => header.push_str("HTTP/1.0 200 OK\r\n"),
+					Protocol::Http11 => header.push_str("HTTP/1.1 200 OK\r\n"),
+				}
+			}
 			header.push_str("Server: Rust 1.13.0\r\n");
 			header.push_str("Content-Type: text/html; charset=UTF-8\r\n");
 			header.push_str("Content-Length: ");
@@ -164,6 +266,9 @@ impl<T: Handler> HttpHandler<T> {
 			let _ = stream.write(header.as_bytes());
 			let _ = stream.write(content.as_slice());
 		}
+
+		let _ = stream.flush();
+		let _ = stream.shutdown(Shutdown::Both);
 	}
 }
 
