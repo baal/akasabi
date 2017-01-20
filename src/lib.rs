@@ -38,12 +38,14 @@ pub trait Request {
 
 pub struct Response {
 	content: Option<Vec<u8>>,
+	connection: Connection,
 }
 
 impl Response {
 	fn new(contents: Option<Vec<u8>>) -> Response {
 		Response {
 			content: contents,
+			connection: Connection::Close,
 		}
 	}
 }
@@ -52,8 +54,7 @@ pub trait Handler {
 	fn handle(&self, &Request) -> Response;
 }
 
-struct RequestImpl<'a, T: 'a> {
-	http_handler: &'a HttpHandler<T>,
+struct RequestImpl<'a> {
 	peer_addr: Option<SocketAddr>,
 	method: Option<Method>,
 	protocol: Option<Protocol>,
@@ -63,7 +64,7 @@ struct RequestImpl<'a, T: 'a> {
 	post_data: Option<&'a [u8]>,
 }
 
-impl<'a, T: Handler> Request for RequestImpl<'a, T> {
+impl<'a> Request for RequestImpl<'a> {
 	fn get_peer_addr(&self) -> Option<SocketAddr> {
 		self.peer_addr
 	}
@@ -74,7 +75,7 @@ impl<'a, T: Handler> Request for RequestImpl<'a, T> {
 		self.method
 	}
 	fn get_connection(&self) -> Option<Connection> {
-		None
+		self.connection
 	}
 	fn get_header(&self) -> &Vec<Vec<u8>> {
 		self.header
@@ -105,10 +106,21 @@ impl<'a, T: Handler> Request for RequestImpl<'a, T> {
 	}
 }
 
+const BUFFER_SIZE: usize = 8192;
+
 pub struct HttpHandler<T> {
 	handler: T,
 	offset: usize,
-	buffer: [u8; 8192],
+	buffer: [u8; BUFFER_SIZE],
+}
+
+fn trim(str: &[u8]) -> &[u8] {
+	if let Some(pos1) = str.iter().position(|&x| x != 32) {
+		if let Some(pos2) = str.iter().rposition(|&x| x != 32) {
+			return &str[pos1 .. pos2 + 1]
+		}
+	}
+	str
 }
 
 impl<T: Handler> HttpHandler<T> {
@@ -117,7 +129,7 @@ impl<T: Handler> HttpHandler<T> {
 		HttpHandler {
 			handler: h,
 			offset: 0,
-			buffer: [0; 8192],
+			buffer: [0; BUFFER_SIZE],
 		}
 	}
 
@@ -149,38 +161,28 @@ impl<T: Handler> HttpHandler<T> {
 		None
 	}
 
-	pub fn read_post_data(&mut self, stream: &mut TcpStream, content_length: usize) -> Option<&[u8]> {
-		loop {
-			if self.offset >= content_length {
-				return Some(&self.buffer[..content_length]);
-			}
-			if self.offset < self.buffer.len() {
-				let size = stream.read(&mut self.buffer[self.offset..]).unwrap();
-				if size == 0 { break; }
-				self.offset = self.offset + size;
-			} else {
-				break;
-			}
-		}
-		None
-	}
-
 	pub fn handle(&mut self, mut stream: TcpStream) {
 
-		self.offset = 0;
-		for i in self.buffer.as_mut().into_iter() {
-			*i = 0;
-		}
+		loop {
+			self.offset = 0;
+			for i in self.buffer.as_mut().into_iter() {
+				*i = 0;
+			}
 
-		let peer_addr = stream.peer_addr().ok();
+			let peer_addr = stream.peer_addr().ok();
 
-		let mut method: Option<Method> = None;
-		let mut protocol: Option<Protocol> = None;
-		let mut header: Vec<Vec<u8>> = Vec::new();
+			let mut method: Option<Method> = None;
+			let mut protocol: Option<Protocol> = None;
+			let mut connection: Option<Connection> = None;
+			let mut header: Vec<Vec<u8>> = Vec::new();
 
-		while let Some(line) = self.read_line(&mut stream) {
-			if line.len() == 0 { break; }
-			if header.is_empty() {
+			while let Some(line) = self.read_line(&mut stream) {
+				if line.len() == 0 { break; }
+				header.push(line);
+			}
+
+			if ! header.is_empty() {
+				let line = &header[0];
 				if let Some(pos) = line.iter().position(|&x| x == 32) {
 					if line[..pos].eq_ignore_ascii_case(b"GET") {
 						method = Some(Method::GET);
@@ -196,79 +198,96 @@ impl<T: Handler> HttpHandler<T> {
 					}
 				}
 			}
-			header.push(line);
-		}
 
-		if method.is_none() {
-			let _ = stream.write(b"HTTP/1.1 501 Not Implemented\r\n\r\n");
-			let _ = stream.flush();
-			let _ = stream.shutdown(Shutdown::Both);
-			return;
-		}
+			if method.is_none() {
+				let _ = stream.write(b"HTTP/1.1 501 Not Implemented\r\n\r\n");
+				let _ = stream.flush();
+				let _ = stream.shutdown(Shutdown::Both);
+				return;
+			}
 
-		if protocol.is_none() {
-			let _ = stream.write(b"HTTP/1.1 501 Not Implemented\r\n\r\n");
-			let _ = stream.flush();
-			let _ = stream.shutdown(Shutdown::Both);
-			return;
-		}
+			if protocol.is_none() {
+				let _ = stream.write(b"HTTP/1.1 501 Not Implemented\r\n\r\n");
+				let _ = stream.flush();
+				let _ = stream.shutdown(Shutdown::Both);
+				return;
+			}
 
-		let mut content_length: usize = 0;
-		let mut post_data: Option<&[u8]> = None;
-		if let Some(Method::POST) = method {
 			for line in &header {
-				if line.len() > 15 && line[..15].eq_ignore_ascii_case(b"Content-Length:") {
-					content_length = line[15..].iter().fold(0, |a, &x|
-						if 48 <= x && x <= 57 { a * 10 + x as usize - 48 } else { a }
-					);
+				let prefix = b"Connection:";
+				let prefix_len = prefix.len();
+				if line.len() > prefix_len && line[..prefix_len].eq_ignore_ascii_case(prefix) {
+					let value = trim(&line[prefix_len..]);
+					if value.eq_ignore_ascii_case(b"keep-alive") {
+						connection = Some(Connection::KeepAlive);
+					} else if value.eq_ignore_ascii_case(b"close") {
+						connection = Some(Connection::Close);
+					}
 				}
 			}
-			loop {
-				if self.offset < content_length && self.offset < self.buffer.len() {
-					let size = stream.read(&mut self.buffer[self.offset..]).unwrap();
-					if size == 0 { break; }
-					self.offset = self.offset + size;
-				} else {
+
+			let mut content_length: usize = 0;
+			let mut post_data: Option<&[u8]> = None;
+			if let Some(Method::POST) = method {
+				for line in &header {
+					if line.len() > 15 && line[..15].eq_ignore_ascii_case(b"Content-Length:") {
+						content_length = line[15..].iter().fold(0, |a, &x|
+							if 48 <= x && x <= 57 { a * 10 + x as usize - 48 } else { a }
+						);
+					}
+				}
+				loop {
+					if self.offset < content_length && self.offset < self.buffer.len() {
+						let size = stream.read(&mut self.buffer[self.offset..]).unwrap();
+						if size == 0 { break; }
+						self.offset = self.offset + size;
+					} else {
+						break;
+					}
+				}
+				post_data = Some(&self.buffer[..content_length]);
+			}
+
+			let request = RequestImpl {
+				peer_addr: peer_addr,
+				method: method,
+				protocol: protocol,
+				connection: connection,
+				header: &header,
+				content_length: content_length,
+				post_data: post_data,
+			};
+
+			let response = self.handler.handle(&request as &Request);
+			if let Some(content) = response.content {
+				let mut header = String::new();
+				if let Some(ref proto) = protocol {
+					match *proto {
+						Protocol::Http10 => header.push_str("HTTP/1.0 200 OK\r\n"),
+						Protocol::Http11 => header.push_str("HTTP/1.1 200 OK\r\n"),
+					}
+				}
+				header.push_str("Server: Rust 1.13.0\r\n");
+				header.push_str("Content-Type: text/html; charset=UTF-8\r\n");
+				header.push_str("Content-Length: ");
+				header.push_str(content.len().to_string().as_str());
+				header.push_str("\r\n");
+				//header.push_str("Connection: keep-alive\r\n");
+				header.push_str("Connection: close\r\n");
+				header.push_str("\r\n");
+				let _ = stream.write(header.as_bytes());
+				let _ = stream.write(content.as_slice());
+			}
+
+			match response.connection {
+				Connection::Close => {
+					let _ = stream.flush();
+					let _ = stream.shutdown(Shutdown::Both);
 					break;
-				}
+				},
+				_ => (),
 			}
-			post_data = Some(&self.buffer[..content_length]);
 		}
-
-		let request = RequestImpl {
-			http_handler: self,
-			peer_addr: peer_addr,
-			method: method,
-			protocol: protocol,
-			connection: None,
-			header: &header,
-			content_length: content_length,
-			post_data: post_data,
-		};
-
-		let response = self.handler.handle(&request as &Request);
-		if let Some(content) = response.content {
-			let mut header = String::new();
-			if let Some(ref proto) = protocol {
-				match *proto {
-					Protocol::Http10 => header.push_str("HTTP/1.0 200 OK\r\n"),
-					Protocol::Http11 => header.push_str("HTTP/1.1 200 OK\r\n"),
-				}
-			}
-			header.push_str("Server: Rust 1.13.0\r\n");
-			header.push_str("Content-Type: text/html; charset=UTF-8\r\n");
-			header.push_str("Content-Length: ");
-			header.push_str(content.len().to_string().as_str());
-			header.push_str("\r\n");
-			//header.push_str("Connection: keep-alive\r\n");
-			header.push_str("Connection: close\r\n");
-			header.push_str("\r\n");
-			let _ = stream.write(header.as_bytes());
-			let _ = stream.write(content.as_slice());
-		}
-
-		let _ = stream.flush();
-		let _ = stream.shutdown(Shutdown::Both);
 	}
 }
 
