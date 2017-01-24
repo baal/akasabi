@@ -1,12 +1,11 @@
 extern crate rustweb;
 
 use std::str;
-use std::string::String;
 use std::thread;
 use std::net::TcpListener;
 
+use rustweb::http::HttpHandler;
 use rustweb::Handler;
-use rustweb::HttpHandler;
 use rustweb::Request;
 use rustweb::Response;
 
