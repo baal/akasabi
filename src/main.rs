@@ -1,7 +1,6 @@
 extern crate rustweb;
 
 use std::str;
-use std::thread;
 use std::net::TcpListener;
 
 use rustweb::http::HttpHandler;
@@ -38,17 +37,8 @@ impl Handler for MyHandler {
 }
 
 fn main() {
-	let mut children = Vec::new();
-	for _ in 0..1 {
-		children.push(thread::spawn(move || {
-			let mut handler = HttpHandler::new(MyHandler);
-			let listener = TcpListener::bind("0.0.0.0:8080").unwrap();
-			for stream in listener.incoming() {
-				handler.handle(stream.unwrap());
-			}
-		}));
-	}
-	for child in children {
-		let _ = child.join();
+	let listener = TcpListener::bind("0.0.0.0:8080").unwrap();
+	for stream in listener.incoming() {
+		HttpHandler::new(MyHandler).handle(stream.unwrap());
 	}
 }
