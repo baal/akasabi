@@ -1,3 +1,5 @@
+extern crate time;
+
 use std::ascii::AsciiExt;
 use std::io::prelude::*;
 use std::net::Shutdown;
@@ -61,13 +63,11 @@ impl<'a> Request for RequestImpl<'a> {
 	fn get_url(&self) -> Option<&[u8]> {
 		let header = self.get_header();
 		if ! header.is_empty() {
-			if let Some(first_line) = header.get(0) {
-				//if let Some(pos1) = first_line[..].iter().position(|&x| x == 32) {
-				if let Some(pos1) = first_line.iter().position(|&x| x == 32) {
-					//if let Some(pos2) = first_line[..].iter().rposition(|&x| x == 32) {
-					if let Some(pos2) = first_line.iter().rposition(|&x| x == 32) {
+			if let Some(initial_request_line) = header.get(0) {
+				if let Some(pos1) = initial_request_line.iter().position(|&x| x == 32) {
+					if let Some(pos2) = initial_request_line.iter().rposition(|&x| x == 32) {
 						if pos1 + 1 < pos2 {
-							return Some(&first_line[pos1 + 1..pos2])
+							return Some(&initial_request_line[pos1 + 1..pos2])
 						}
 					}
 				}
@@ -248,6 +248,13 @@ impl<T: Handler> HttpHandler<T> {
 						Protocol::Http11 => header.push_str("HTTP/1.1 200 OK\r\n"),
 					}
 				}
+				let now = time::now_utc();
+				let week = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+				let month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+				header.push_str(format!("Date: {}, {} {} {} {:02}:{:02}:{:02} GMT\r\n",
+					week.get(now.tm_wday as usize).unwrap(), now.tm_mday,
+					month.get(now.tm_mon as usize).unwrap(), 1900 + now.tm_year,
+					now.tm_hour, now.tm_min, now.tm_sec).as_str());
 				header.push_str("Server: Rust 1.13.0\r\n");
 				header.push_str("Content-Type: text/html; charset=UTF-8\r\n");
 				header.push_str("Content-Length: ");
