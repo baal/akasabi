@@ -6,6 +6,7 @@ use http::Method;
 use http::Connection;
 
 pub mod http;
+pub mod url;
 
 pub trait Handler {
 	fn handle(&self, &Request) -> Response;
@@ -39,12 +40,5 @@ impl Response {
 	}
 	fn get_connection(&self) -> Connection {
 		self.connection
-	}
-}
-
-#[cfg(test)]
-mod tests {
-	#[test]
-	fn it_works() {
 	}
 }
