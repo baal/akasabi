@@ -28,10 +28,13 @@ pub enum Connection {
 	KeepAlive,
 }
 
+const LF: u8 = 10;
+const CR: u8 = 13;
 const SP: u8 = 32;
 const ZERO: u8 = 48;
 const NINE: u8 = 57;
 const COLON: u8 = 58;
+const BUFFER_SIZE: usize = 8192;
 
 fn trim(str: &[u8]) -> &[u8] {
 	if let Some(pos1) = str.iter().position(|&x| x != SP) {
@@ -67,7 +70,7 @@ impl Header {
 	}
 	pub fn get_protocol(&self) -> Option<Protocol> {
 		if let Some(line) = self.lines.get(0) {
-			if let Some(pos) = line.iter().rposition(|&x| x == 32) {
+			if let Some(pos) = line.iter().rposition(|&x| x == SP) {
 				if line[pos + 1..].eq_ignore_ascii_case(b"HTTP/1.0") {
 					return Some(Protocol::Http10);
 				} else if line[pos + 1..].eq_ignore_ascii_case(b"HTTP/1.1") {
@@ -79,7 +82,7 @@ impl Header {
 	}
 	pub fn get_method(&self) -> Option<Method> {
 		if let Some(line) = self.lines.get(0) {
-			if let Some(pos) = line.iter().position(|&x| x == 32) {
+			if let Some(pos) = line.iter().position(|&x| x == SP) {
 				if line[..pos].eq_ignore_ascii_case(b"GET") {
 					return Some(Method::GET);
 				} else if line[..pos].eq_ignore_ascii_case(b"POST") {
@@ -91,8 +94,8 @@ impl Header {
 	}
 	pub fn get_path(&self) -> Option<&[u8]> {
 		if let Some(line) = self.lines.get(0) {
-			if let Some(pos1) = line.iter().position(|&x| x == 32) {
-				if let Some(pos2) = line.iter().rposition(|&x| x == 32) {
+			if let Some(pos1) = line.iter().position(|&x| x == SP) {
+				if let Some(pos2) = line.iter().rposition(|&x| x == SP) {
 					if pos1 + 1 < pos2 {
 						return Some(&line[pos1 + 1..pos2])
 					}
@@ -152,8 +155,6 @@ impl<'a> Request for RequestImpl<'a> {
 	}
 }
 
-const BUFFER_SIZE: usize = 8192;
-
 pub struct HttpHandler<T> {
 	handler: T,
 	offset: usize,
@@ -173,8 +174,8 @@ impl<T: Handler> HttpHandler<T> {
 	fn read_line(&mut self, stream: &mut TcpStream) -> Option<Vec<u8>> {
 		loop {
 			if self.offset > 0 {
-				if let Some(pos) = self.buffer[..self.offset].iter().position(|&x| x == 10) {
-					let eol = if pos > 0 && self.buffer[pos - 1] == 13 { pos - 1 } else { pos };
+				if let Some(pos) = self.buffer[..self.offset].iter().position(|&x| x == LF) {
+					let eol = if pos > 0 && self.buffer[pos - 1] == CR { pos - 1 } else { pos };
 					let line = self.buffer[0..eol].to_vec();
 					if pos + 1 < self.offset {
 						for i in pos + 1..self.offset {
@@ -258,13 +259,23 @@ impl<T: Handler> HttpHandler<T> {
 				post_data: post_data,
 			};
 
+			let response = self.handler.handle(&request as &Request);
+
 			let mut buf = String::new();
+
 			buf.push_str(match request.get_protocol() {
 				Some(Protocol::Http10) => "HTTP/1.0",
 				Some(Protocol::Http11) => "HTTP/1.1",
 				_ => "HTTP/1.1",
 			});
-			buf.push_str(" 200 OK\r\n");
+
+			buf.push_str(" ");
+			buf.push_str(match response.status {
+				200 => "200 OK",
+				_ => "500 Internal Server Error",
+			});
+			buf.push_str("\r\n");
+
 			let now = time::now_utc();
 			let week = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 			let month = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -272,16 +283,14 @@ impl<T: Handler> HttpHandler<T> {
 				week.get(now.tm_wday as usize).unwrap(), now.tm_mday,
 				month.get(now.tm_mon as usize).unwrap(), 1900 + now.tm_year,
 				now.tm_hour, now.tm_min, now.tm_sec).as_str());
+
 			buf.push_str("Server: Rust 1.13.0\r\n");
 
-			let response = self.handler.handle(&request as &Request);
 			if let Some(ref content) = response.content {
 				buf.push_str("Content-Type: text/html; charset=UTF-8\r\n");
 				buf.push_str("Content-Length: ");
 				buf.push_str(content.len().to_string().as_str());
 				buf.push_str("\r\n");
-				let _ = stream.write(buf.as_bytes());
-				let _ = stream.write(content.as_slice());
 			}
 
 			buf.push_str("Connection: ");
@@ -289,7 +298,14 @@ impl<T: Handler> HttpHandler<T> {
 				Connection::Close => "close",
 				Connection::KeepAlive => "keep-alive",
 			});
-			buf.push_str("\r\n\r\n");
+			buf.push_str("\r\n");
+			buf.push_str("\r\n");
+
+			let _ = stream.write(buf.as_bytes());
+
+			if let Some(ref content) = response.content {
+				let _ = stream.write(content.as_slice());
+			}
 
 			if let Connection::Close = response.connection {
 				let _ = stream.flush();

@@ -26,6 +26,7 @@ pub trait Request {
 pub struct Response {
 	content: Option<Vec<u8>>,
 	connection: Connection,
+	status: u32,
 }
 
 impl Response {
@@ -33,6 +34,7 @@ impl Response {
 		Response {
 			content: contents,
 			connection: Connection::Close,
+			status: 200,
 		}
 	}
 	fn get_connection(&self) -> Connection {
