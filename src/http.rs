@@ -284,7 +284,7 @@ impl<T: Handler> HttpHandler<T> {
 				month.get(now.tm_mon as usize).unwrap(), 1900 + now.tm_year,
 				now.tm_hour, now.tm_min, now.tm_sec).as_str());
 
-			buf.push_str("Server: Rust 1.13.0\r\n");
+			buf.push_str("Server: Akasabi 0.1.0\r\n");
 
 			if let Some(ref content) = response.content {
 				buf.push_str("Content-Type: text/html; charset=UTF-8\r\n");

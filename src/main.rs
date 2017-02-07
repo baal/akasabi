@@ -1,19 +1,19 @@
-extern crate rustweb;
+extern crate akasabi;
 
 use std::str;
 use std::net::TcpListener;
 
-use rustweb::http::Protocol;
-use rustweb::http::Method;
-use rustweb::http::Connection;
+use akasabi::http::Protocol;
+use akasabi::http::Method;
+use akasabi::http::Connection;
 
-use rustweb::http::HttpHandler;
-use rustweb::Handler;
-use rustweb::Request;
-use rustweb::Response;
+use akasabi::http::HttpHandler;
+use akasabi::Handler;
+use akasabi::Request;
+use akasabi::Response;
 
-use rustweb::html::builder::HTML;
-use rustweb::html::builder::Tag;
+use akasabi::html::builder::HTML;
+use akasabi::html::builder::Tag;
 
 struct MyHandler;
 
