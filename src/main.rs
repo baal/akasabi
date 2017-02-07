@@ -12,6 +12,9 @@ use rustweb::Handler;
 use rustweb::Request;
 use rustweb::Response;
 
+use rustweb::html::builder::HTML;
+use rustweb::html::builder::Tag;
+
 struct MyHandler;
 
 impl Handler for MyHandler {
@@ -50,18 +53,11 @@ impl Handler for MyHandler {
 		for line in &header.lines {
 			println!("\"{}\"", str::from_utf8(line.as_slice()).unwrap());
 		}
-		let mut content = String::new();
-		content.push_str("<!DOCTYPE html>\n");
-		content.push_str("<html lang=\"ja\">\n");
-		content.push_str("<head><title>TEST</title></head>\n");
-		content.push_str("<body>\n");
-		content.push_str("<form method=\"POST\">\n");
-		content.push_str("<input type=\"text\" name=\"test\" />\n");
-		content.push_str("<button>submit</button>\n");
-		content.push_str("</form>\n");
-		content.push_str("</body>\n");
-		content.push_str("</html>\n");
-		req.create_response(Some(content.as_bytes().to_vec()))
+		let mut html = HTML::new("TEST", "ja");
+		let mut div = Tag::new("div");
+		div.push_str("TEST");
+		html.body.push_tag(div);
+		req.create_response(Some(html.to_string().as_bytes().to_vec()))
 	}
 }
 

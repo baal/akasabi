@@ -10,7 +10,7 @@ const LA: u8 = 97;
 const LF: u8 = 102;
 const LZ: u8 = 122;
 
-pub fn encode_percent(str: &[u8]) ->Vec<u8> {
+pub fn encode_percent(str: &[u8]) -> Vec<u8> {
 	let mut result: Vec<u8> = Vec::new();
 	for &x in str.iter() {
 		match x {

@@ -7,6 +7,7 @@ use http::Connection;
 
 pub mod http;
 pub mod url;
+pub mod html;
 
 pub trait Handler {
 	fn handle(&self, &Request) -> Response;
