@@ -1,12 +1,16 @@
+use html;
+
 enum Node<'a> {
-	Text(&'a str),
+	Str(&'a str),
+	Escape(&'a str),
 	Tag(Tag<'a>),
 }
 
 impl<'a> ToString for Node<'a> {
 	fn to_string(&self) -> String {
 		match *self {
-			Node::Text(s) => String::from(s),
+			Node::Str(s) => String::from(s),
+			Node::Escape(s) => html::escape_html(s),
 			Node::Tag(ref tag) => tag.to_string(),
 		}
 	}
@@ -30,7 +34,10 @@ impl<'a> Tag<'a> {
 		self.attr.push((name, value));
 	}
 	pub fn push_str(&mut self, s: &'a str) {
-		self.child.push(Node::Text(s));
+		self.child.push(Node::Str(s));
+	}
+	pub fn push_escape(&mut self, s: &'a str) {
+		self.child.push(Node::Escape(s));
 	}
 	pub fn push_tag(&mut self, tag: Tag<'a>) {
 		self.child.push(Node::Tag(tag));
@@ -85,7 +92,7 @@ impl<'a> HTML<'a> {
 						name: "title",
 						attr: Vec::new(),
 						child: vec![
-							Node::Text(title),
+							Node::Escape(title),
 						],
 					}),
 				],
