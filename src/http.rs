@@ -150,8 +150,8 @@ impl<'a> Request for RequestImpl<'a> {
 	fn get_header(&self) -> &Header {
 		self.header
 	}
-	fn create_response(&self, contents: Option<Vec<u8>>) -> Response {
-		Response::new(contents)
+	fn create_response(&self, contents: &str) -> Response {
+		Response::new(Some(contents.as_bytes().to_vec()))
 	}
 }
 

@@ -22,7 +22,7 @@ pub trait Request {
 	fn get_content_length(&self) -> Option<usize>;
 	fn get_post_data(&self) -> Option<&[u8]>;
 	fn get_header(&self) -> &Header;
-	fn create_response(&self, contents: Option<Vec<u8>>) -> Response;
+	fn create_response(&self, contents: &str) -> Response;
 }
 
 pub struct Response {

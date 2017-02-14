@@ -53,9 +53,9 @@ impl<'a> ToString for Tag<'a> {
 			html.push_str(" ");
 			for &a in &self.attr {
 				let (name, value) = a;
-				html.push_str(name);
+				html.push_str(html::escape_html(name).as_str());
 				html.push_str("=\"");
-				html.push_str(value);
+				html.push_str(html::escape_html(value).as_str());
 				html.push_str("\"");
 			}
 		}
