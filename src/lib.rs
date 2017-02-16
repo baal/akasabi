@@ -22,7 +22,6 @@ pub trait Request {
 	fn get_content_length(&self) -> Option<usize>;
 	fn get_post_data(&self) -> Option<&[u8]>;
 	fn get_header(&self) -> &Header;
-	fn create_response(&self, contents: &str) -> Response;
 }
 
 pub struct Response {
@@ -41,5 +40,11 @@ impl Response {
 	}
 	fn get_connection(&self) -> Connection {
 		self.connection
+	}
+	pub fn from_str(contents: &str) -> Response {
+		Response::new(Some(contents.as_bytes().to_vec()))
+	}
+	pub fn from_string(contents: String) -> Response {
+		Response::new(Some(contents.as_bytes().to_vec()))
 	}
 }

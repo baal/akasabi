@@ -57,7 +57,7 @@ impl Handler for MyHandler {
 		let mut div = Tag::new("div");
 		div.push_escape("<TEST>");
 		html.body.push_tag(div);
-		req.create_response(html.to_string().as_str())
+		Response::from_string(html.to_string())
 	}
 }
 

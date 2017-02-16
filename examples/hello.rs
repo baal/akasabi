@@ -10,8 +10,8 @@ use akasabi::Response;
 struct MyHandler;
 
 impl Handler for MyHandler {
-	fn handle(&self, req: &Request) -> Response {
-		req.create_response("Hello, world!")
+	fn handle(&self, _: &Request) -> Response {
+		Response::from_str("Hello, world!")
 	}
 }
 

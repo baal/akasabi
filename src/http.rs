@@ -8,7 +8,6 @@ use std::net::TcpStream;
 
 use Handler;
 use Request;
-use Response;
 
 #[derive(Copy,Clone)]
 pub enum Protocol {
@@ -149,9 +148,6 @@ impl<'a> Request for RequestImpl<'a> {
 	}
 	fn get_header(&self) -> &Header {
 		self.header
-	}
-	fn create_response(&self, contents: &str) -> Response {
-		Response::new(Some(contents.as_bytes().to_vec()))
 	}
 }
 
