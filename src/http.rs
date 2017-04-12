@@ -27,6 +27,12 @@ pub enum Connection {
 	KeepAlive,
 }
 
+pub enum PostData {
+	None,
+	Buf,
+	Vec(Vec<u8>),
+}
+
 const LF: u8 = 10;
 const CR: u8 = 13;
 const SP: u8 = 32;
@@ -34,6 +40,7 @@ const ZERO: u8 = 48;
 const NINE: u8 = 57;
 const COLON: u8 = 58;
 const BUFFER_SIZE: usize = 8192;
+const MAX_POST_SIZE: usize = 65536;
 
 fn trim(str: &[u8]) -> &[u8] {
 	if let Some(pos1) = str.iter().position(|&x| x != SP) {
@@ -121,7 +128,8 @@ impl Header {
 struct RequestImpl<'a> {
 	peer_addr: Option<SocketAddr>,
 	header: &'a Header,
-	post_data: Option<&'a [u8]>,
+	post_data: &'a PostData,
+	http_handler_buffer: &'a [u8],
 }
 
 impl<'a> Request for RequestImpl<'a> {
@@ -144,7 +152,11 @@ impl<'a> Request for RequestImpl<'a> {
 		self.header.get_content_length()
 	}
 	fn get_post_data(&self) -> Option<&[u8]> {
-		self.post_data
+		match *self.post_data {
+			PostData::None => Option::None,
+			PostData::Buf => Some(self.http_handler_buffer),
+			PostData::Vec(ref vec) => Some(vec.as_slice()),
+		}
 	}
 	fn get_header(&self) -> &Header {
 		self.header
@@ -228,19 +240,29 @@ impl<T: Handler> HttpHandler<T> {
 				return;
 			}
 
-			let mut post_data: Option<&[u8]> = None;
+			let mut post_data: PostData = PostData::None;
 			if let Some(Method::POST) = header.get_method() {
-				if let Some(content_length) = header.get_content_length() {
-					loop {
-						if self.offset < content_length && self.offset < self.buffer.len() {
+				if let Some(length) = header.get_content_length() {
+					if length <= BUFFER_SIZE {
+						while self.offset < length && self.offset < self.buffer.len() {
 							let size = stream.read(&mut self.buffer[self.offset..]).unwrap();
-							if size == 0 { break; }
 							self.offset = self.offset + size;
-						} else {
-							break;
 						}
+						post_data = PostData::Buf;
+					} else if length <= MAX_POST_SIZE {
+						let mut large_buffer: Vec<u8> = Vec::with_capacity(length);
+						for i in 0..self.offset {
+							large_buffer.push(self.buffer[i]);
+						}
+						self.offset = 0;
+						while large_buffer.len() < length {
+							let size = stream.read(&mut self.buffer).unwrap();
+							for i in 0..size {
+								large_buffer.push(self.buffer[i]);
+							}
+						}
+						post_data = PostData::Vec(large_buffer);
 					}
-					post_data = Some(&self.buffer[..self.offset]);
 				} else {
 					let _ = stream.write(b"HTTP/1.1 501 Not Implemented\r\n\r\n");
 					let _ = stream.flush();
@@ -252,7 +274,8 @@ impl<T: Handler> HttpHandler<T> {
 			let request = RequestImpl {
 				peer_addr: peer_addr,
 				header: &header,
-				post_data: post_data,
+				post_data: &post_data,
+				http_handler_buffer: &self.buffer,
 			};
 
 			let response = self.handler.handle(&request as &Request);
@@ -280,7 +303,7 @@ impl<T: Handler> HttpHandler<T> {
 				month.get(now.tm_mon as usize).unwrap(), 1900 + now.tm_year,
 				now.tm_hour, now.tm_min, now.tm_sec).as_str());
 
-			buf.push_str("Server: Akasabi 0.1.0\r\n");
+			buf.push_str("Server: Akasabi 0.1.0 (Rust 1.16.0)\r\n");
 
 			if let Some(ref content) = response.content {
 				buf.push_str("Content-Type: text/html; charset=UTF-8\r\n");
