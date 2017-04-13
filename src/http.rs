@@ -27,9 +27,9 @@ pub enum Connection {
 	KeepAlive,
 }
 
-pub enum PostData {
+pub enum PostData<'a> {
 	None,
-	Buf,
+	Buf(&'a [u8]),
 	Vec(Vec<u8>),
 }
 
@@ -128,8 +128,7 @@ impl Header {
 struct RequestImpl<'a> {
 	peer_addr: Option<SocketAddr>,
 	header: &'a Header,
-	post_data: &'a PostData,
-	http_handler_buffer: &'a [u8],
+	post_data: &'a PostData<'a>,
 }
 
 impl<'a> Request for RequestImpl<'a> {
@@ -154,7 +153,7 @@ impl<'a> Request for RequestImpl<'a> {
 	fn get_post_data(&self) -> Option<&[u8]> {
 		match *self.post_data {
 			PostData::None => Option::None,
-			PostData::Buf => Some(self.http_handler_buffer),
+			PostData::Buf(slice) => Some(slice),
 			PostData::Vec(ref vec) => Some(vec.as_slice()),
 		}
 	}
@@ -248,7 +247,7 @@ impl<T: Handler> HttpHandler<T> {
 							let size = stream.read(&mut self.buffer[self.offset..]).unwrap();
 							self.offset = self.offset + size;
 						}
-						post_data = PostData::Buf;
+						post_data = PostData::Buf(&self.buffer[0..self.offset]);
 					} else if length <= MAX_POST_SIZE {
 						let mut large_buffer: Vec<u8> = Vec::with_capacity(length);
 						for i in 0..self.offset {
@@ -275,7 +274,6 @@ impl<T: Handler> HttpHandler<T> {
 				peer_addr: peer_addr,
 				header: &header,
 				post_data: &post_data,
-				http_handler_buffer: &self.buffer,
 			};
 
 			let response = self.handler.handle(&request as &Request);
