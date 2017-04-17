@@ -8,6 +8,14 @@ use std::net::TcpStream;
 
 use Handler;
 use Request;
+use Params;
+
+const LF: u8 = 10;
+const CR: u8 = 13;
+const SP: u8 = 32;
+
+const BUFFER_SIZE: usize = 8192;
+const MAX_POST_SIZE: usize = 65536;
 
 #[derive(Copy,Clone)]
 pub enum Protocol {
@@ -33,15 +41,6 @@ pub enum PostData<'a> {
 	Vec(Vec<u8>),
 }
 
-const LF: u8 = 10;
-const CR: u8 = 13;
-const SP: u8 = 32;
-const ZERO: u8 = 48;
-const NINE: u8 = 57;
-const COLON: u8 = 58;
-const BUFFER_SIZE: usize = 8192;
-const MAX_POST_SIZE: usize = 65536;
-
 fn trim(str: &[u8]) -> &[u8] {
 	if let Some(pos1) = str.iter().position(|&x| x != SP) {
 		if let Some(pos2) = str.iter().rposition(|&x| x != SP) {
@@ -59,8 +58,8 @@ impl Header {
 	fn get_string(&self, name: &[u8]) -> Option<&[u8]> {
 		for line in &self.lines {
 			if line.len() > name.len() {
-				if line[..name.len()].eq_ignore_ascii_case(name) && line[name.len()] == COLON {
-					return Some(trim(&line[name.len() + 1..]))
+				if line[.. name.len()].eq_ignore_ascii_case(name) && line[name.len()] == b':' {
+					return Some(trim(&line[name.len() + 1 ..]))
 				}
 			}
 		}
@@ -69,48 +68,48 @@ impl Header {
 	fn get_number(&self, name: &[u8]) -> Option<usize> {
 		if let Some(value) = self.get_string(name) {
 			return Some(value.iter().fold(0, |a, &x|
-				if ZERO <= x && x <= NINE { a * 10 + (x - ZERO) as usize } else { a }
+				if b'0' <= x && x <= b'9' { a * 10 + (x - b'0') as usize } else { a }
 			));
 		}
 		None
 	}
-	pub fn get_protocol(&self) -> Option<Protocol> {
+	pub fn protocol(&self) -> Option<Protocol> {
 		if let Some(line) = self.lines.get(0) {
 			if let Some(pos) = line.iter().rposition(|&x| x == SP) {
-				if line[pos + 1..].eq_ignore_ascii_case(b"HTTP/1.0") {
+				if line[pos + 1 ..].eq_ignore_ascii_case(b"HTTP/1.0") {
 					return Some(Protocol::Http10);
-				} else if line[pos + 1..].eq_ignore_ascii_case(b"HTTP/1.1") {
+				} else if line[pos + 1 ..].eq_ignore_ascii_case(b"HTTP/1.1") {
 					return Some(Protocol::Http11);
 				}
 			}
 		}
 		None
 	}
-	pub fn get_method(&self) -> Option<Method> {
+	pub fn method(&self) -> Option<Method> {
 		if let Some(line) = self.lines.get(0) {
 			if let Some(pos) = line.iter().position(|&x| x == SP) {
-				if line[..pos].eq_ignore_ascii_case(b"GET") {
+				if line[.. pos].eq_ignore_ascii_case(b"GET") {
 					return Some(Method::GET);
-				} else if line[..pos].eq_ignore_ascii_case(b"POST") {
+				} else if line[.. pos].eq_ignore_ascii_case(b"POST") {
 					return Some(Method::POST);
 				}
 			}
 		}
 		None
 	}
-	pub fn get_path(&self) -> Option<&[u8]> {
+	pub fn path(&self) -> Option<&[u8]> {
 		if let Some(line) = self.lines.get(0) {
 			if let Some(pos1) = line.iter().position(|&x| x == SP) {
 				if let Some(pos2) = line.iter().rposition(|&x| x == SP) {
 					if pos1 + 1 < pos2 {
-						return Some(&line[pos1 + 1..pos2])
+						return Some(&line[pos1 + 1 .. pos2])
 					}
 				}
 			}
 		}
 		None
 	}
-	pub fn get_connection(&self) -> Option<Connection> {
+	pub fn connection(&self) -> Option<Connection> {
 		if let Some(value) = self.get_string(b"Connection") {
 			if value.eq_ignore_ascii_case(b"keep-alive") {
 				return Some(Connection::KeepAlive);
@@ -120,7 +119,7 @@ impl Header {
 		}
 		None
 	}
-	pub fn get_content_length(&self) -> Option<usize> {
+	pub fn content_length(&self) -> Option<usize> {
 		self.get_number(b"Content-Length")
 	}
 }
@@ -132,33 +131,44 @@ struct RequestImpl<'a> {
 }
 
 impl<'a> Request for RequestImpl<'a> {
-	fn get_peer_addr(&self) -> Option<SocketAddr> {
+	fn peer_addr(&self) -> Option<SocketAddr> {
 		self.peer_addr
 	}
-	fn get_protocol(&self) -> Option<Protocol> {
-		self.header.get_protocol()
+	fn protocol(&self) -> Option<Protocol> {
+		self.header.protocol()
 	}
-	fn get_method(&self) -> Option<Method> {
-		self.header.get_method()
+	fn method(&self) -> Option<Method> {
+		self.header.method()
 	}
-	fn get_path(&self) -> Option<&[u8]> {
-		self.header.get_path()
+	fn path(&self) -> Option<&[u8]> {
+		self.header.path()
 	}
-	fn get_connection(&self) -> Option<Connection> {
-		self.header.get_connection()
+	fn connection(&self) -> Option<Connection> {
+		self.header.connection()
 	}
-	fn get_content_length(&self) -> Option<usize> {
-		self.header.get_content_length()
+	fn content_length(&self) -> Option<usize> {
+		self.header.content_length()
 	}
-	fn get_post_data(&self) -> Option<&[u8]> {
+	fn post_data(&self) -> Option<&[u8]> {
 		match *self.post_data {
 			PostData::None => Option::None,
 			PostData::Buf(slice) => Some(slice),
 			PostData::Vec(ref vec) => Some(vec.as_slice()),
 		}
 	}
-	fn get_header(&self) -> &Header {
+	fn header(&self) -> &Header {
 		self.header
+	}
+	fn get_params(&self) -> Params {
+		if let Some(path) = self.path() {
+			if let Some(pos) = path.iter().position(|&x| x == b'?') {
+				return Params { query: Some(&path[pos + 1 ..]) }
+			}
+		}
+		Params { query: None }
+	}
+	fn post_params(&self) -> Params {
+		Params { query: self.post_data() }
 	}
 }
 
@@ -181,11 +191,11 @@ impl<T: Handler> HttpHandler<T> {
 	fn read_line(&mut self, stream: &mut TcpStream) -> Option<Vec<u8>> {
 		loop {
 			if self.offset > 0 {
-				if let Some(pos) = self.buffer[..self.offset].iter().position(|&x| x == LF) {
+				if let Some(pos) = self.buffer[.. self.offset].iter().position(|&x| x == LF) {
 					let eol = if pos > 0 && self.buffer[pos - 1] == CR { pos - 1 } else { pos };
-					let line = self.buffer[0..eol].to_vec();
+					let line = self.buffer[0 .. eol].to_vec();
 					if pos + 1 < self.offset {
-						for i in pos + 1..self.offset {
+						for i in pos + 1 .. self.offset {
 							self.buffer[i - pos - 1] = self.buffer[i];
 						}
 						self.offset = self.offset - pos - 1;
@@ -196,7 +206,7 @@ impl<T: Handler> HttpHandler<T> {
 				}
 			}
 			if self.offset < self.buffer.len() {
-				let size = stream.read(&mut self.buffer[self.offset..]).unwrap();
+				let size = stream.read(&mut self.buffer[self.offset ..]).unwrap();
 				if size == 0 { break; }
 				self.offset = self.offset + size;
 			} else {
@@ -225,14 +235,14 @@ impl<T: Handler> HttpHandler<T> {
 
 			let header = Header { lines: header_lines };
 
-			if header.get_method().is_none() {
+			if header.method().is_none() {
 				let _ = stream.write(b"HTTP/1.1 501 Not Implemented\r\n\r\n");
 				let _ = stream.flush();
 				let _ = stream.shutdown(Shutdown::Both);
 				return;
 			}
 
-			if header.get_protocol().is_none() {
+			if header.protocol().is_none() {
 				let _ = stream.write(b"HTTP/1.1 501 Not Implemented\r\n\r\n");
 				let _ = stream.flush();
 				let _ = stream.shutdown(Shutdown::Both);
@@ -240,23 +250,23 @@ impl<T: Handler> HttpHandler<T> {
 			}
 
 			let mut post_data: PostData = PostData::None;
-			if let Some(Method::POST) = header.get_method() {
-				if let Some(length) = header.get_content_length() {
+			if let Some(Method::POST) = header.method() {
+				if let Some(length) = header.content_length() {
 					if length <= BUFFER_SIZE {
 						while self.offset < length && self.offset < self.buffer.len() {
-							let size = stream.read(&mut self.buffer[self.offset..]).unwrap();
+							let size = stream.read(&mut self.buffer[self.offset ..]).unwrap();
 							self.offset = self.offset + size;
 						}
-						post_data = PostData::Buf(&self.buffer[0..self.offset]);
+						post_data = PostData::Buf(&self.buffer[0 .. self.offset]);
 					} else if length <= MAX_POST_SIZE {
 						let mut large_buffer: Vec<u8> = Vec::with_capacity(length);
-						for i in 0..self.offset {
+						for i in 0 .. self.offset {
 							large_buffer.push(self.buffer[i]);
 						}
 						self.offset = 0;
 						while large_buffer.len() < length {
 							let size = stream.read(&mut self.buffer).unwrap();
-							for i in 0..size {
+							for i in 0 .. size {
 								large_buffer.push(self.buffer[i]);
 							}
 						}
@@ -280,7 +290,7 @@ impl<T: Handler> HttpHandler<T> {
 
 			let mut buf = String::new();
 
-			buf.push_str(match request.get_protocol() {
+			buf.push_str(match request.protocol() {
 				Some(Protocol::Http10) => "HTTP/1.0",
 				Some(Protocol::Http11) => "HTTP/1.1",
 				_ => "HTTP/1.1",
@@ -311,7 +321,7 @@ impl<T: Handler> HttpHandler<T> {
 			}
 
 			buf.push_str("Connection: ");
-			buf.push_str(match response.get_connection() {
+			buf.push_str(match response.connection() {
 				Connection::Close => "close",
 				Connection::KeepAlive => "keep-alive",
 			});
